@@ -1,0 +1,42 @@
+Secrets Manager lab, real apply against LocalStack
+Date: 2026-08-12 02:26:17
+Backend: localstack/localstack:3 community
+======================================================================
+
+VERIFIED FROM THE AWS APIs, NOT FROM THE CONFIG
+
+  secret:
+    {
+        "Name": "lab05/database/app",
+        "KmsKeyId": "arn:aws:kms:us-east-1:000000000000:key/8c3d268f-db69-4e08-bfad-0f30b8f9a148",
+        "RotationEnabled": true
+    }
+  retrieval works (password truncated):
+    {'engine': 'postgres', 'host': 'lab-placeholder.local', 'password': 'fP5A...', 'port': 5432, 'username': 'lab_app_user'}
+  KMS key policy conditions:
+      AllowConsumerDecryptViaSecretsManagerOnly -> {"StringEquals": {"kms:ViaService": "secretsmanager.us-east-1.amazonaws.com"}}
+
+WHAT RAN
+  KMS customer managed key with rotation enabled, its key policy, the
+  consumer and rotation IAM roles, and the secret itself. Retrieval was
+  exercised end to end: the secret is encrypted with the CMK and the value
+  comes back intact.
+
+  The kms:ViaService condition is present on the deployed key policy,
+  which is the control that stops the consumer role taking ciphertext
+  elsewhere and unwrapping it. That one has no clean CyberArk equivalent
+  and it is worth pointing at in the comparison doc.
+
+WHAT DID NOT RUN, AND WHY
+  CloudTrail is a LocalStack Pro feature. A full apply hangs on it, so the
+  audit half of this lab, terraform/audit.tf, could not be exercised here.
+  That is the half carrying the lab's most important finding, that reads
+  are invisible until you enable data events and pay per event. It stays
+  unverified until a real AWS run.
+
+  Rotation is enabled on the secret but an actual rotation was not
+  triggered: LocalStack community Lambda execution is unreliable for the
+  four step protocol and a green result here would not mean much.
+
+  LocalStack also does not evaluate resource policy at request time, so
+  prove-denied is still a real AWS test.
