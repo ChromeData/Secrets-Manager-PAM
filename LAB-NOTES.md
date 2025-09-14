@@ -1,30 +1,64 @@
-# Lab Notes — Secrets Manager as PAM Control Plane
+# Lab Notes — 05 Secrets Manager as a PAM Control Plane
 
-> Running log, newest first.
+Running log. Errors, dead ends, fixes, and things that surprised me.
+Dated entries, newest at the bottom. This file is the proof the lab was real.
 
-## Known traps (pre-seeded)
+---
 
-### enable_rotation = true with no Lambda ARN
+## Format
 
-Turning on rotation before the rotation Lambda exists fails the apply. Apply the
-function first, wire its ARN into `rotation_lambda_arn`, then flip `enable_rotation`.
+```
+### YYYY-MM-DD — what I was trying to do
 
-### CloudTrail data events are off by default
+**Expected:**
+**Got:**
+**Cause:**
+**Fix:**
+```
 
-`GetSecretValue` will NOT appear in CloudTrail unless you enable data events for
-Secrets Manager (extra cost). Discovering the audit gap is itself a finding for the
-comparison doc.
+---
 
-### recovery_window blocks quick re-runs
+## Known traps (found while building — confirm when you run it)
 
-A deleted secret sits in a 7-day recovery window; re-creating with the same name
-fails until it's purged. Use `--force-delete-without-recovery` in the lab, and note
-that this is the opposite of what you'd do in production.
+### Rotation fails immediately with an invoke permission error
 
-## YYYY-MM-DD — <first real entry>
+Secrets Manager has to be allowed to call the function. Without
+`aws_lambda_permission.allow_secretsmanager`, `rotate-secret` returns an error
+that talks about the *secret*, not the missing Lambda permission, so it sends you
+looking in the wrong file. Already wired in `rotation.tf` — noted because it's
+the most common first-run failure.
 
-**Goal:** · **What happened:** · **Why:** · **Fix:** · **Time lost:**
+### `enable_rotation = true` with no function ARN
 
-## Open questions
-- [ ] Does rotation cause a brief window where the consumer gets a stale secret?
-- [ ] Cost of enabling data events at realistic read volume?
+Leaves the secret in a state where the console shows rotation on and every
+rotation attempt fails silently. Rotation is only enabled here because the
+function exists and `depends_on` forces the ordering.
+
+### Terraform wants to revert the password on every plan after a rotation
+
+Rotation changes the value outside Terraform, so the next plan sees drift and
+offers to "fix" it — by writing the stale seed value back over a live credential.
+`ignore_secret_changes = true` prevents it. Without it this eventually causes an
+outage during an unrelated apply.
+
+### Data events cost money
+
+The advanced event selector bills per event. Fine for a lab. Worth measuring
+before enabling account-wide — put the number in the comparison doc when you
+have it.
+
+---
+
+## Open questions to answer while running
+
+- [ ] How long does a full four-step rotation actually take end to end?
+- [ ] Does `prove-denied` still fail if the caller is the account root?
+- [ ] What's the real per-event cost of data events over a week?
+- [ ] Does the `kms:ViaService` condition block a `GenerateDataKey` path I missed?
+- [ ] Measure: reads recorded in CloudTrail vs. reads actually made. Any gap?
+
+---
+
+## Log
+
+_(first entry goes here on the first real run)_

@@ -1,28 +1,74 @@
-# Built on terraform-aws-modules/terraform-aws-secrets-manager (Anton Babenko).
-# This file is the lab's configuration of that module, not the module itself.
-
-terraform {
-  required_version = ">= 1.9.0"
-  required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 5.60" }
-  }
-}
-
-provider "aws" {
-  default_tags {
-    tags = {
-      Purpose = "pam-cloud-lab"
-      Lab     = "05-secrets-manager-pam"
-    }
-  }
-}
+# The secret itself, its encryption key, and the one role allowed to read it.
+#
+# Built on terraform-aws-modules/secrets-manager (Apache-2.0, Anton Babenko).
+# The module creates the secret; the access model below is this lab's work.
 
 data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
-# The consuming application's role — the ONLY principal allowed to read the secret.
-# In PAM terms this is the account that "checks out" the credential.
-resource "aws_iam_role" "app" {
-  name = "lab05-secret-consumer"
+# ---------------------------------------------------------------------------
+# Encryption key
+#
+# The AWS-managed key (aws/secretsmanager) works, but it cannot carry its own
+# key policy. A customer-managed key can - which means decrypt permission
+# becomes a second, independent gate in front of the secret. Losing control of
+# the secret policy is then not enough to read the value. In vault terms this
+# is the difference between one lock and two locks keyed differently.
+# ---------------------------------------------------------------------------
+resource "aws_kms_key" "secrets" {
+  description             = "${var.name_prefix} - encrypts the lab secret"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowAccountAdministration"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowConsumerDecryptViaSecretsManagerOnly"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.consumer.arn }
+        Action    = ["kms:Decrypt", "kms:DescribeKey"]
+        Resource  = "*"
+        Condition = {
+          # Decrypt is granted only when the call arrives *through* Secrets
+          # Manager. The role cannot take the ciphertext elsewhere and unwrap it.
+          StringEquals = {
+            "kms:ViaService" = "secretsmanager.${data.aws_region.current.name}.amazonaws.com"
+          }
+        }
+      },
+      {
+        Sid       = "AllowRotationFunctionUse"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.rotation.arn }
+        Action    = ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+        Resource  = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_kms_alias" "secrets" {
+  name          = "alias/${var.name_prefix}-secrets"
+  target_key_id = aws_kms_key.secrets.key_id
+}
+
+# ---------------------------------------------------------------------------
+# The consuming workload
+#
+# In PAM language this is the application identity that "checks out" the
+# credential. It gets exactly one action on exactly one secret.
+# ---------------------------------------------------------------------------
+resource "aws_iam_role" "consumer" {
+  name = "${var.name_prefix}-secret-consumer"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -31,47 +77,79 @@ resource "aws_iam_role" "app" {
       Action    = "sts:AssumeRole"
     }]
   })
+
+  tags = { Purpose = "pam-cloud-lab" }
 }
 
+resource "aws_iam_role_policy" "consumer_read" {
+  name = "read-lab-secret"
+  role = aws_iam_role.consumer.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "secretsmanager:GetSecretValue"
+      Resource = module.db_secret.secret_arn
+    }]
+  })
+}
+
+# ---------------------------------------------------------------------------
+# The secret
+#
+# Two things make this least-privilege rather than merely private:
+#
+#   1. The resource policy names the consumer role explicitly and denies
+#      everyone else, so an over-broad IAM policy elsewhere in the account
+#      still cannot read it. Identity policy and resource policy must BOTH
+#      allow. That intersection is the control.
+#   2. block_public_policy refuses any future policy that would open it up.
+# ---------------------------------------------------------------------------
 module "db_secret" {
   source  = "terraform-aws-modules/secrets-manager/aws"
   version = "~> 1.3"
 
-  name        = "lab05/database/app"
-  description = "Application DB credential — lab PAM control-plane demo"
+  name        = var.secret_name
+  description = "Application DB credential - PAM control-plane lab"
 
-  # KMS-encrypted with a customer-managed key (create separately or use the module's).
-  recovery_window_in_days = 7
+  kms_key_id              = aws_kms_key.secrets.arn
+  recovery_window_in_days = var.recovery_window_in_days
 
-  # Least-privilege resource policy: only the consumer role, and only GetSecretValue.
-  create_policy       = true
-  block_public_policy = true
-  policy_statements = {
-    read = {
-      sid = "AllowConsumerRoleReadOnly"
-      principals = [{
-        type        = "AWS"
-        identifiers = [aws_iam_role.app.arn]
-      }]
-      actions   = ["secretsmanager:GetSecretValue"]
-      resources = ["*"]
-      # Condition: only from within the VPC / only with MFA / only in-region — pick
-      # one and document why. This is where PAM thinking shows.
-      conditions = [{
-        test     = "StringEquals"
-        variable = "aws:PrincipalTag/Purpose"
-        values   = ["pam-cloud-lab"]
-      }]
-    }
-  }
+  # Seed value. Rotation replaces the password on first run; username persists.
+  create_random_password = false
+  secret_string = jsonencode({
+    username = "lab_app_user"
+    password = random_password.seed.result
+    engine   = "postgres"
+    host     = "lab-placeholder.local"
+    port     = 5432
+  })
 
-  # Automatic rotation via a Lambda (wired in rotation/). Turn on once the function
-  # exists; leaving it on with no function is a common first-run failure — see notes.
-  enable_rotation     = false
-  rotation_lambda_arn = "" # set to module.rotation_lambda output after apply
+  # The resource policy is attached separately, in policy.tf. The module's
+  # policy_statements variable is a typed map that requires every statement to
+  # carry an identical set of attributes, which a Deny/NotPrincipal statement
+  # cannot satisfy alongside a conditional Allow. Writing the policy directly
+  # is clearer and keeps the access model in one readable block.
+  create_policy = false
+
+  # Rotation is wired to the function defined in rotation.tf.
+  enable_rotation     = true
+  rotation_lambda_arn = aws_lambda_function.rotation.arn
   rotation_rules = {
-    automatically_after_days = 30
+    automatically_after_days = var.rotation_days
   }
 
-  ignore_secret_changes = true # rotation changes the value out-of-band; don't fight it
+  # Rotation changes the value outside Terraform. Without this, every plan
+  # after a rotation shows a spurious diff and someone eventually "fixes" it
+  # by applying the stale value back over a live credential.
+  ignore_secret_changes = true
+
+  depends_on = [aws_lambda_permission.allow_secretsmanager]
+}
+
+resource "random_password" "seed" {
+  length           = 32
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
 }
