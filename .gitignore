@@ -31,3 +31,5 @@ reports/*.xml
 
 # build artifact from archive_file
 terraform/.build/
+__pycache__/
+*.pyc
