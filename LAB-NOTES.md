@@ -61,4 +61,55 @@ have it.
 
 ## Log
 
-_(first entry goes here on the first real run)_
+### 2026-08-11 — wiring rotation to the secret
+
+**Expected:** `terraform validate` to pass once the rotation Lambda existed.
+
+**Got:**
+
+```
+Error: Cycle: module.db_secret.var.name (expand), module.db_secret.var.replica (expand),
+module.db_secret.var.description (expand), module.db_secret.var.create (expand),
+module.db_secret.var.kms_key_id (expand), ... module.db_secret.output.secret_arn (expand),
+aws_iam_role_policy.rotation, aws_lambda_function.rotation,
+aws_lambda_permission.allow_secretsmanager, module.db_secret (expand)
+```
+
+**Cause:** I scoped the rotation role's policy to `module.db_secret.secret_arn`, which
+felt like good practice. But the secret needs the function's ARN to enable rotation,
+the function needs its role policy, and the policy was reaching back for the secret.
+Three-way cycle.
+
+**Fix:** Built the ARN by hand from account + region + secret name, with a trailing
+`-*` for the six random characters AWS appends. Same scoping, no edge back into the
+module. Worth noting the scoping is *not* looser: the wildcard only covers the random
+suffix, not other secrets.
+
+---
+
+### 2026-08-11 — resource policy through the module
+
+**Expected:** three statements (allow read, allow rotate, deny everyone else) via the
+module's `policy_statements`.
+
+**Got:**
+
+```
+Error: Invalid value for input variable
+  on main.tf line 141, in module "db_secret":
+The given value is not suitable for module.db_secret.var.policy_statements
+declared at .terraform\modules\db_secret\variables.tf:81,1-29: all map
+elements must have the same type.
+```
+
+**Cause:** The module types `policy_statements` as a map, so every statement needs an
+identical attribute set. A `Deny` with `not_principals` can't match the shape of a
+conditional `Allow`.
+
+**Fix:** Set `create_policy = false` and wrote the policy directly with
+`aws_iam_policy_document` + `aws_secretsmanager_secret_policy` (see `policy.tf`).
+Ended up clearer anyway: the whole access model is one readable block instead of a
+typed map fighting the schema.
+
+**Takeaway:** a module that makes the common case easy can make the correct case
+impossible. Dropping to the resource was the right call, not a workaround.
