@@ -1,4 +1,4 @@
-# The resource policy — the actual access control for this lab.
+# The resource policy, the actual access control for this lab.
 #
 # Read this as three rules:
 #
