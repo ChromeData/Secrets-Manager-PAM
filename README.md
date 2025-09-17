@@ -9,7 +9,7 @@
 | **Domains** | CyberArk/Idira, AWS |
 | **Built on** | [terraform-aws-modules/secrets-manager](https://github.com/terraform-aws-modules/terraform-aws-secrets-manager) (Anton Babenko) |
 | **Cost** | Under $1. **Runtime** ~4 hours |
-| **Status** | Built and verified. terraform validate and fmt clean (output in findings/). Cloud run pending |
+| **Status** | Applied for real against LocalStack. Secret, CMK and retrieval verified (output in findings/). CloudTrail audit half needs real AWS |
 
 ## Situation
 
@@ -34,6 +34,12 @@ I built four things:
 The comparison lives in [docs/cyberark-comparison.md](./docs/cyberark-comparison.md), which is the real deliverable.
 
 ## Result
+
+**Applied for real** against LocalStack, which runs Secrets Manager, KMS and IAM locally. The secret, the customer managed key and both roles deploy, and retrieval works end to end. The `kms:ViaService` condition is confirmed present on the deployed key policy, which is the control that stops the app role carrying ciphertext elsewhere to unwrap it.
+
+**The audit half is still unproven, and it is the important half.** CloudTrail is a LocalStack paid feature, so `terraform/audit.tf` could not run. That file carries this lab's central claim, that secret reads are invisible until you enable data events. It needs a real AWS run.
+
+Also unproven locally: `prove-denied`, because LocalStack does not evaluate resource policy at request time. So the access model is built and deployed and the retrieval path is proven; the audit and enforcement claims are not yet. Full output in [findings/localstack-apply-run.txt](./findings/localstack-apply-run.txt).
 
 `terraform validate` passes and CI is green. Building it caught a real dependency cycle that validate flagged. It is in the history.
 
