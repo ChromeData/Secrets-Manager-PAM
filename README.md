@@ -1,76 +1,82 @@
 # Lab 05 — AWS Secrets Manager as a PAM Control Plane
 
-**Deploy AWS Secrets Manager with least-privilege resource policies, automatic
-rotation, and audit logging — then write it up as a CyberArk engineer evaluating
-the cloud-native alternative to a vault.**
+**Can AWS's built-in secrets service replace a CyberArk vault? I built it
+properly, then judged it from the vault side. Answer: for machines yes, for
+people no — and the audit trail is off by default.**
 
 | | |
 |---|---|
-| **Domains** | CyberArk/Idira · AWS · Linux |
-| **Built on** | [terraform-aws-modules/terraform-aws-secrets-manager](https://github.com/terraform-aws-modules/terraform-aws-secrets-manager) (Apache-2.0, by Anton Babenko / terraform-aws-modules) · [terraform-aws-lambda](https://github.com/terraform-aws-modules/terraform-aws-lambda) |
-| **Runtime** | ~4 hours · < $1 |
-| **Status** | 🟡 In progress |
+| **Domains** | CyberArk/Idira · AWS |
+| **Built on** | [terraform-aws-modules/secrets-manager](https://github.com/terraform-aws-modules/secrets-manager/aws) (Apache-2.0, Anton Babenko) |
+| **Cost** | < $1 · **Runtime** ~4 hours |
+| **Status** | 🟡 Built, not yet run |
 
 ---
 
-## Why this lab exists
+## The point
 
-You know how CyberArk manages a credential: access policy, rotation policy, audit
-trail. AWS Secrets Manager claims to do the same thing natively. The valuable
-artifact almost nobody produces is a **side-by-side evaluation written by someone
-who actually operates PAM** — where the cloud-native version is equivalent, where
-it's weaker, and where you'd still reach for a dedicated vault.
+Everyone compares these two from the AWS side. The useful version comes from
+someone who has actually run a vault, because the gaps only look obvious if you
+know what a vault does for free.
 
-This is your signature piece. It's the one lab on this list that only makes sense
-coming from a CyberArk person.
+**[`docs/cyberark-comparison.md`](./docs/cyberark-comparison.md) is the
+deliverable.** The Terraform exists to make that document honest.
 
 ## What I built
 
-- Secrets Manager secrets provisioned via Anton Babenko's module, each with a
-  **resource policy scoped by principal and condition keys** (least privilege at
-  the secret, not just the IAM layer).
-- An **automatic rotation Lambda** (built with `terraform-aws-lambda`) so the
-  secret rotates without a human touching it.
-- **CloudTrail data events** on secret reads, so every `GetSecretValue` is audited.
-- **`docs/cyberark-comparison.md`** — the deliverable: a control-by-control mapping
-  of Secrets Manager against CyberArk/Conjur (access policy ↔ resource policy,
-  CPM rotation ↔ rotation Lambda, PSM audit ↔ CloudTrail), with an honest verdict
-  on each.
+**Three-layer access model.** To read the secret you must pass an IAM policy, a
+resource policy, *and* a KMS key policy. All three must allow. That intersection
+is the control — not any one of them.
 
-## What I did not build
+**A deny that beats admin.** The resource policy explicitly denies every
+principal except the app role and the rotation function. Your own account admin
+holds `secretsmanager:*` and still gets refused. `make prove-denied` demonstrates
+it in about four seconds, and it's the single best thing to show someone.
 
-The Terraform module and the Lambda module are Anton Babenko's / the
-terraform-aws-modules org's. My work is the least-privilege policy design, the
-rotation function logic, the audit wiring, and the comparative analysis.
+**A working rotation function** ([`rotation/index.py`](./rotation/index.py)) —
+the real four-step AWS protocol: create, set, test, finish. If any step throws,
+the current credential is untouched and still works. That's the same guarantee
+CyberArk's CPM gives you on a failed change, and the `testSecret` step is the one
+people skip on their way to rotating themselves into an outage.
+
+**Decrypt that only works through the front door.** The KMS key grants the app
+role `Decrypt` only under `kms:ViaService = secretsmanager`. The role can't take
+the ciphertext somewhere else and unwrap it. There's no clean CyberArk equivalent
+for this one — it's a point in AWS's favour.
+
+**Retrieval auditing, which is the actual finding.** CloudTrail does *not* log
+`GetSecretValue` by default — reading a secret is a "data event", off unless you
+enable it and pay per event. So the default posture can't answer "who read this
+credential last Tuesday." A vault answers that on day one for free.
+[`terraform/audit.tf`](./terraform/audit.tf) turns it on. It took five resources.
+
+## What I didn't build
+
+The secret resource comes from Anton Babenko's module. The access model,
+rotation handler, KMS conditions, audit wiring, and the comparison are mine.
 
 ---
 
 ## Running it
 
 ```bash
-make init
-make plan
 make apply
-make rotate-now     # force a rotation, watch it succeed in CloudTrail
-make audit          # pull the last N GetSecretValue events
+make prove-denied        # your admin identity is refused — the deny works
+make read-as-consumer    # the app role succeeds
+make rotate-now          # forces rotation, waits for AWSPENDING to clear
+make audit               # pulls your read back out of CloudTrail
 make destroy
 ```
 
-## The deliverable
+Needs the AWS CLI, `jq`, and Terraform ≥ 1.9. `make validate` checks syntax
+without touching AWS.
 
-`docs/cyberark-comparison.md` is the point. Suggested table:
+## Findings
 
-| PAM capability | CyberArk/Conjur | AWS Secrets Manager | Verdict |
-|----------------|-----------------|---------------------|---------|
-| Access policy granularity | | resource policy + IAM + condition keys | |
-| Rotation | CPM plugins | rotation Lambda | |
-| Audit of secret access | PSM / vault audit | CloudTrail data events | |
-| Break-glass / dual control | | | |
-| Cross-account sharing | | resource policy + KMS grant | |
+`findings/` is empty until I run it. [LAB-NOTES.md](./LAB-NOTES.md) is the log —
+errors, dead ends, fixes.
 
-Fill the verdict column from experience, not marketing. That column is what a
-hiring manager reads.
+## License
 
-## What broke
-
-See [LAB-NOTES.md](./LAB-NOTES.md).
+Lab code: MIT ([LICENSE](./LICENSE)). Upstream module stays Apache-2.0 and is
+credited above.

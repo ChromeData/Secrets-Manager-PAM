@@ -28,3 +28,6 @@ reports/*.xml
 *.swp
 .idea/
 .vscode/
+
+# build artifact from archive_file
+terraform/.build/
