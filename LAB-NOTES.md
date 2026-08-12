@@ -87,6 +87,51 @@ suffix, not other secrets.
 
 ---
 
+### 2026-08-12, real apply against LocalStack
+
+Ran the configuration against LocalStack community, which implements Secrets
+Manager, KMS and IAM locally. The secret, the customer managed key, its key
+policy and both roles all created, and retrieval works end to end:
+
+```
+secret:      lab05/database/app
+KmsKeyId:    arn:aws:kms:us-east-1:000000000000:key/8c3d268f-...
+RotationEnabled: true
+
+get-secret-value -> {'engine':'postgres','host':'lab-placeholder.local',
+                     'password':'fP5A...','port':5432,'username':'lab_app_user'}
+```
+
+The `kms:ViaService` condition is present on the deployed key policy:
+
+```
+AllowConsumerDecryptViaSecretsManagerOnly ->
+  {"StringEquals": {"kms:ViaService": "secretsmanager.us-east-1.amazonaws.com"}}
+```
+
+That is the control that stops the consumer role carrying ciphertext somewhere
+else and unwrapping it, and it has no clean CyberArk equivalent. Worth pointing
+at directly in the comparison doc rather than describing.
+
+**What would not run, and it is the important half.** A full apply hangs:
+CloudTrail is a LocalStack Pro feature. So `terraform/audit.tf` is unexercised,
+and that file carries this lab's central finding, that secret reads are
+invisible until you turn on data events and pay per event. It stays unverified
+until a real AWS run. Applied the rest with `-target`.
+
+Rotation is enabled on the secret but I did not trigger one. LocalStack
+community's Lambda execution is not reliable enough for the four step protocol,
+and a green result there would not mean anything.
+
+LocalStack also does not evaluate resource policy at request time, so
+`prove-denied` remains a real AWS test. The honest position: the access model is
+built and deployed, the retrieval path is proven, the audit and enforcement
+claims are not yet.
+
+Full output in `findings/localstack-apply-run.txt`.
+
+---
+
 ### 2026-08-11, resource policy through the module
 
 **Expected:** three statements (allow read, allow rotate, deny everyone else) via the
