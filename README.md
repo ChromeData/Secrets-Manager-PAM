@@ -1,5 +1,8 @@
 # Lab 05: AWS Secrets Manager as a PAM Control Plane
 
+<p align="center"><img src="assets/secret-and-cmk.svg" alt="Secret, CMK, and ViaService condition verified" width="720"></p>
+
+
 [![tests](https://github.com/ChromeData/Secrets-Manager-PAM/actions/workflows/tests.yml/badge.svg)](https://github.com/ChromeData/Secrets-Manager-PAM/actions/workflows/tests.yml)
 
 **Can AWS's built in secrets service replace a CyberArk vault? I built it properly, then judged it from the vault side. Answer: for machines yes, for people no, and the audit trail is off by default.**
