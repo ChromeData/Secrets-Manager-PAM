@@ -1,4 +1,4 @@
-# Lab Notes — 05 Secrets Manager as a PAM Control Plane
+# Lab Notes, 05 Secrets Manager as a PAM Control Plane
 
 Running log. Errors, dead ends, fixes, and things that surprised me.
 Dated entries, newest at the bottom. This file is the proof the lab was real.
@@ -8,7 +8,7 @@ Dated entries, newest at the bottom. This file is the proof the lab was real.
 ## Format
 
 ```
-### YYYY-MM-DD — what I was trying to do
+### YYYY-MM-DD, what I was trying to do
 
 **Expected:**
 **Got:**
@@ -18,14 +18,14 @@ Dated entries, newest at the bottom. This file is the proof the lab was real.
 
 ---
 
-## Known traps (found while building — confirm when you run it)
+## Known traps (found while building, confirm when you run it)
 
 ### Rotation fails immediately with an invoke permission error
 
 Secrets Manager has to be allowed to call the function. Without
 `aws_lambda_permission.allow_secretsmanager`, `rotate-secret` returns an error
 that talks about the *secret*, not the missing Lambda permission, so it sends you
-looking in the wrong file. Already wired in `rotation.tf` — noted because it's
+looking in the wrong file. Already wired in `rotation.tf`, noted because it's
 the most common first-run failure.
 
 ### `enable_rotation = true` with no function ARN
@@ -37,14 +37,14 @@ function exists and `depends_on` forces the ordering.
 ### Terraform wants to revert the password on every plan after a rotation
 
 Rotation changes the value outside Terraform, so the next plan sees drift and
-offers to "fix" it — by writing the stale seed value back over a live credential.
+offers to "fix" it, by writing the stale seed value back over a live credential.
 `ignore_secret_changes = true` prevents it. Without it this eventually causes an
 outage during an unrelated apply.
 
 ### Data events cost money
 
 The advanced event selector bills per event. Fine for a lab. Worth measuring
-before enabling account-wide — put the number in the comparison doc when you
+before enabling account-wide, put the number in the comparison doc when you
 have it.
 
 ---
@@ -61,7 +61,7 @@ have it.
 
 ## Log
 
-### 2026-08-11 — wiring rotation to the secret
+### 2026-08-11, wiring rotation to the secret
 
 **Expected:** `terraform validate` to pass once the rotation Lambda existed.
 
@@ -87,7 +87,7 @@ suffix, not other secrets.
 
 ---
 
-### 2026-08-11 — resource policy through the module
+### 2026-08-11, resource policy through the module
 
 **Expected:** three statements (allow read, allow rotate, deny everyone else) via the
 module's `policy_statements`.
