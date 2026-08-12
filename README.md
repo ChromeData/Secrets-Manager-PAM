@@ -9,7 +9,7 @@
 | **Domains** | CyberArk/Idira, AWS |
 | **Built on** | [terraform-aws-modules/secrets-manager](https://github.com/terraform-aws-modules/terraform-aws-secrets-manager) (Anton Babenko) |
 | **Cost** | Under $1. **Runtime** ~4 hours |
-| **Status** | Built, not yet run |
+| **Status** | Built and verified. terraform validate and fmt clean (output in findings/). Cloud run pending |
 
 ## Situation
 
